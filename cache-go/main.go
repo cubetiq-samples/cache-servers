@@ -17,6 +17,12 @@ var writeCacheCh = make(chan map[string]string, 100)
 func getHandler(w http.ResponseWriter, r *http.Request) {
 	key := r.URL.Query().Get("key")
 
+	if key == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Key is required"})
+		return
+	}
+
 	log.Printf("GET key %s", key)
 	lock.RLock()
 	value, found := cache[key]
@@ -55,6 +61,34 @@ func setHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"message": "Value stored"})
+}
+
+func deleteHandler(w http.ResponseWriter, r *http.Request) {
+	key := r.URL.Query().Get("key")
+
+	log.Printf("DELETE key %s", key)
+
+	if key == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Key is required"})
+		return
+	}
+
+	if cache[key] == "" {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Key not found"})
+		return
+	}
+
+	lock.Lock()
+	delete(cache, key)
+	lock.Unlock()
+
+	// Notify the persister that there are changes
+	writeCacheCh <- cache
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"message": "Key deleted"})
 }
 
 func persistCacheWorker() {
@@ -96,6 +130,8 @@ func cacheHandler(w http.ResponseWriter, r *http.Request) {
 		getHandler(w, r)
 	case "POST":
 		setHandler(w, r)
+	case "DELETE":
+		deleteHandler(w, r)
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
