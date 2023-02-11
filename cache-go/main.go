@@ -3,16 +3,22 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
+	"sync"
 )
 
 var cache = make(map[string]string)
+var lock sync.RWMutex
 
 func getHandler(w http.ResponseWriter, r *http.Request) {
 	key := r.URL.Query().Get("key")
+	lock.RLock()
+
 	value, found := cache[key]
+	lock.RUnlock()
 
 	if !found {
 		w.WriteHeader(http.StatusNotFound)
@@ -35,9 +41,40 @@ func setHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("SET key %s", key)
+	lock.Lock()
 	cache[key] = value
+	lock.Unlock()
+
+	err := persistCache()
+	if err != nil {
+		log.Println("Error persisting cache:", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Error persisting cache"})
+		return
+	}
+
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"message": "Value stored"})
+}
+
+func persistCache() error {
+	lock.RLock()
+	defer lock.RUnlock()
+
+	bytes, err := json.Marshal(cache)
+	if err != nil {
+		return err
+	}
+
+	return ioutil.WriteFile("cache.json", bytes, 0644)
+}
+
+func loadCache() error {
+	bytes, err := ioutil.ReadFile("cache.json")
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(bytes, &cache)
 }
 
 func cacheHandler(w http.ResponseWriter, r *http.Request) {
@@ -55,6 +92,12 @@ func cacheHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	err := loadCache()
+	if err != nil && !os.IsNotExist(err) {
+		fmt.Println("Error loading cache:", err)
+		os.Exit(1)
+	}
+
 	port := os.Getenv("PORT")
 	host := os.Getenv("HOST")
 
@@ -66,7 +109,7 @@ func main() {
 
 	http.HandleFunc("/cache", cacheHandler)
 	fmt.Println("Starting Redis-like server listening on", addr)
-	err := http.ListenAndServe(addr, nil)
+	err = http.ListenAndServe(addr, nil)
 	if err != nil {
 		fmt.Println("Error starting server:", err)
 	}
