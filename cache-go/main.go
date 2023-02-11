@@ -43,6 +43,9 @@ func setHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("SET key %s", key)
 	lock.Lock()
+	if cache[key] != "" {
+		log.Printf("Key %s already exists, overwriting", key)
+	}
 	cache[key] = value
 	lock.Unlock()
 
