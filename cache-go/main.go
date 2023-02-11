@@ -74,12 +74,6 @@ func deleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if cache[key] == "" {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Key not found"})
-		return
-	}
-
 	lock.Lock()
 	delete(cache, key)
 	lock.Unlock()
@@ -103,7 +97,6 @@ func getKeysHandler(w http.ResponseWriter, r *http.Request) {
 		cacheSize += len(v)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"keys": keys, "size": cacheSize})
 }
 
@@ -138,40 +131,87 @@ func loadCache() error {
 	return json.Unmarshal(bytes, &cache)
 }
 
-func cacheHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
+type ExtendedRequest struct {
+	*http.Request
+}
 
-	switch r.Method {
-	case "GET":
-		getHandler(w, r)
-	case "POST":
-		setHandler(w, r)
-	case "DELETE":
-		deleteHandler(w, r)
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
+type ExtendedResponseWriter struct {
+	http.ResponseWriter
+}
+
+func (r *ExtendedRequest) Methods(methods ...string) bool {
+	for _, method := range methods {
+		if r.Method == method {
+			return true
+		}
 	}
+	return false
+}
+
+func (w *ExtendedResponseWriter) MethodNotAllowedResponse() {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusMethodNotAllowed)
+	json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
+}
+
+func routerMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method == "GET" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		path := r.URL.Path
+
+		switch path {
+		case "/get":
+			if !(&ExtendedRequest{r}).Methods("GET") {
+				(&ExtendedResponseWriter{w}).MethodNotAllowedResponse()
+				return
+			}
+		case "/set":
+			if !(&ExtendedRequest{r}).Methods("POST") {
+				(&ExtendedResponseWriter{w}).MethodNotAllowedResponse()
+				return
+			}
+		case "/delete":
+			if !(&ExtendedRequest{r}).Methods("DELETE") {
+				(&ExtendedResponseWriter{w}).MethodNotAllowedResponse()
+				return
+			}
+		default:
+			if !(&ExtendedRequest{r}).Methods("GET") {
+				(&ExtendedResponseWriter{w}).MethodNotAllowedResponse()
+				return
+			}
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 func printRoutes() {
 	fmt.Println("Available routes:")
-	fmt.Println("\n-----------------------------------------------------------------------------")
-	fmt.Println("| Method | Route                                | Description                 |")
-	fmt.Println("|--------|--------------------------------------|-----------------------------|")
-	fmt.Println("| GET    | /cache/keys                          | Retrieve all keys of cache  |")
-	fmt.Println("| GET    | /cache?key={key}                     | Retrieve value for given key|")
-	fmt.Println("| POST   | /cache?key={key}&value={value}       | Add new key-value to cache  |")
-	fmt.Println("| DELETE | /cache?key={key}                     | Delete key from cache       |")
-	fmt.Println("------------------------------------------------------------------------------")
+	fmt.Println("\n------------------------------------------------------------------------")
+	fmt.Println("| Method | Route                           | Description                 |")
+	fmt.Println("|--------|---------------------------------|-----------------------------|")
+	fmt.Println("| GET    | /keys                           | Retrieve all keys of cache  |")
+	fmt.Println("| GET    | /get?key={key}                  | Retrieve value for given key|")
+	fmt.Println("| POST   | /set?key={key}&value={value}    | Add new key-value to cache  |")
+	fmt.Println("| DELETE | /delete?key={key}               | Delete key from cache       |")
+	fmt.Println("--------------------------------------------------------------------------")
 }
 
 func NewRouter() *http.ServeMux {
 	router := http.NewServeMux()
-	router.HandleFunc("/cache", cacheHandler)
-	router.HandleFunc("/cache/keys", getKeysHandler)
+	router.HandleFunc("/keys", getKeysHandler)
+	router.HandleFunc("/get", getHandler)
+	router.HandleFunc("/set", setHandler)
+	router.HandleFunc("/delete", deleteHandler)
+
 	printRoutes()
-	
 	return router
 }
 
@@ -195,7 +235,7 @@ func main() {
 
 	router := NewRouter()
 	fmt.Println("Starting Redis-like server listening on", addr)
-	err = http.ListenAndServe(addr, router)
+	err = http.ListenAndServe(addr, routerMiddleware(router))
 	if err != nil {
 		fmt.Println("Error starting server:", err)
 	}
