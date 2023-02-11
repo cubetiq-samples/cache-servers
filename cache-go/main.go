@@ -154,6 +154,27 @@ func cacheHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func printRoutes() {
+	fmt.Println("Available routes:")
+	fmt.Println("\n-----------------------------------------------------------------------------")
+	fmt.Println("| Method | Route                                | Description                 |")
+	fmt.Println("|--------|--------------------------------------|-----------------------------|")
+	fmt.Println("| GET    | /cache/keys                          | Retrieve all keys of cache  |")
+	fmt.Println("| GET    | /cache?key={key}                     | Retrieve value for given key|")
+	fmt.Println("| POST   | /cache?key={key}&value={value}       | Add new key-value to cache  |")
+	fmt.Println("| DELETE | /cache?key={key}                     | Delete key from cache       |")
+	fmt.Println("------------------------------------------------------------------------------")
+}
+
+func NewRouter() *http.ServeMux {
+	router := http.NewServeMux()
+	router.HandleFunc("/cache", cacheHandler)
+	router.HandleFunc("/cache/keys", getKeysHandler)
+	printRoutes()
+	
+	return router
+}
+
 func main() {
 	err := loadCache()
 	if err != nil && !os.IsNotExist(err) {
@@ -172,11 +193,9 @@ func main() {
 
 	go persistCacheWorker()
 
-	http.HandleFunc("/cache", cacheHandler)
-	http.HandleFunc("/cache/keys", getKeysHandler)
-
+	router := NewRouter()
 	fmt.Println("Starting Redis-like server listening on", addr)
-	err = http.ListenAndServe(addr, nil)
+	err = http.ListenAndServe(addr, router)
 	if err != nil {
 		fmt.Println("Error starting server:", err)
 	}
