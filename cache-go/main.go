@@ -91,6 +91,22 @@ func deleteHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"message": "Key deleted"})
 }
 
+func getKeysHandler(w http.ResponseWriter, r *http.Request) {
+	keys := make([]string, 0, len(cache))
+	for k := range cache {
+		keys = append(keys, k)
+	}
+
+	// Get the total size of the cache that store in memory (in bytes)
+	cacheSize := 0
+	for _, v := range cache {
+		cacheSize += len(v)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"keys": keys, "size": cacheSize})
+}
+
 func persistCacheWorker() {
 	for {
 		select {
@@ -157,6 +173,8 @@ func main() {
 	go persistCacheWorker()
 
 	http.HandleFunc("/cache", cacheHandler)
+	http.HandleFunc("/cache/keys", getKeysHandler)
+
 	fmt.Println("Starting Redis-like server listening on", addr)
 	err = http.ListenAndServe(addr, nil)
 	if err != nil {
