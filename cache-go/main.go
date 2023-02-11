@@ -16,8 +16,9 @@ var writeCacheCh = make(chan map[string]string, 100)
 
 func getHandler(w http.ResponseWriter, r *http.Request) {
 	key := r.URL.Query().Get("key")
-	lock.RLock()
 
+	log.Printf("GET key %s", key)
+	lock.RLock()
 	value, found := cache[key]
 	lock.RUnlock()
 
