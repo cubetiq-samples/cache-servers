@@ -12,6 +12,7 @@ import (
 
 var cache = make(map[string]string)
 var lock sync.RWMutex
+var writeCacheCh = make(chan map[string]string, 100)
 
 func getHandler(w http.ResponseWriter, r *http.Request) {
 	key := r.URL.Query().Get("key")
@@ -45,28 +46,34 @@ func setHandler(w http.ResponseWriter, r *http.Request) {
 	cache[key] = value
 	lock.Unlock()
 
-	err := persistCache()
-	if err != nil {
-		log.Println("Error persisting cache:", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Error persisting cache"})
-		return
-	}
+	// Notify the persister that there are changes
+	writeCacheCh <- cache
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"message": "Value stored"})
 }
 
-func persistCache() error {
-	lock.RLock()
-	defer lock.RUnlock()
+func persistCacheWorker() {
+	for {
+		select {
+		case c := <-writeCacheCh:
+			persistCache(c)
+		}
+	}
+}
 
-	bytes, err := json.Marshal(cache)
+func persistCache(c map[string]string) {
+	bytes, err := json.Marshal(c)
 	if err != nil {
-		return err
+		fmt.Println("Error marshaling cache:", err)
+		return
+	}
+	err = ioutil.WriteFile("cache.json", bytes, 0644)
+	if err != nil {
+		fmt.Println("Error writing cache to disk:", err)
 	}
 
-	return ioutil.WriteFile("cache.json", bytes, 0644)
+	fmt.Println("Cache persisted")
 }
 
 func loadCache() error {
@@ -106,6 +113,8 @@ func main() {
 	}
 
 	addr := fmt.Sprintf("%s:%s", host, port)
+
+	go persistCacheWorker()
 
 	http.HandleFunc("/cache", cacheHandler)
 	fmt.Println("Starting Redis-like server listening on", addr)
